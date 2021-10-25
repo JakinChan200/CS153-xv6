@@ -6,6 +6,7 @@
 #include "x86.h"
 #include "proc.h"
 #include "spinlock.h"
+#define WNOHANG  1
 
 struct {
   struct spinlock lock;
@@ -20,6 +21,73 @@ extern void trapret(void);
 
 static void wakeup1(void *chan);
 
+int waitpid(int pid, int *status, int options){
+  // The system call must wait for a process (not necessary a child process) 
+  // with a pid that equals to one provided by the pid argument. The return 
+  // value must be the process id of the process that was terminated or -1 if 
+  // this process does not exist or if an unexpected error occurred. We are required 
+  // only to implement a blocking waitpid where the kernel prevents the current 
+  // process from execution until a process with the given pid terminates.
+// (2% credit + Bonus 5%; you can get 98% the lab credit without implementing this part): 
+// Check out the waitpid option WNOHANG, for example as specified in this link. Implement 
+// WNOHANG and create a version of CELEBW02 example on the same page that checks of a child 
+// process is still running (it has to be simplified to work with xv6, for example, 
+// avoiding the use of time). You can also make assumptions on what is returned in status 
+// and implement only an exited status (i.e., enough to run something like the CELEBW02 example).
+
+// Demands status information immediately. If status information is immediately available on an 
+// appropriate child process, waitpid() returns this information. Otherwise, waitpid() returns 
+// immediately with an error code indicating that the information was not available. In other words, 
+// WNOHANG checks child processes without causing the caller to be suspended.
+  struct proc *p;
+  int matchingPID;
+  struct proc *curproc = myproc();
+
+  acquire(&ptable.lock);
+  for(;;){
+    matchingPID = 0;
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      if(p->pid != pid)
+        continue;
+      matchingPID = 1;
+      if (options == WNOHANG) {
+        release(&ptable.lock);
+        if (status){
+          *status = p->status;
+          return *status;
+        }
+        return -1;
+      }
+      if(p->state == ZOMBIE){
+        if(status){
+          *status = p->status;
+        }
+        pid = p->pid;
+        kfree(p->kstack);
+        p->kstack = 0;
+        freevm(p->pgdir);
+        p->pid = 0;
+        p->parent = 0;
+        p->name[0] = 0;
+        p->killed = 0;
+        p->state = UNUSED;
+        if(status){
+          *status = p->status;
+        }
+        release(&ptable.lock);
+        return pid;
+      }
+    }
+
+    if(!matchingPID || curproc->killed){
+      release(&ptable.lock);
+      return -1;
+    }
+
+    sleep(curproc, &ptable.lock);
+  }
+
+}
 void
 pinit(void)
 {
@@ -223,9 +291,9 @@ fork(void)
 
 // Exit the current process.  Does not return.
 // An exited process remains in the zombie state
-// until its parent calls wait() to find out it exited.
+// until its parent calls wait(0) to find out it exited.
 void
-exit(void)
+exit(int status)
 {
   struct proc *curproc = myproc();
   struct proc *p;
@@ -249,7 +317,7 @@ exit(void)
 
   acquire(&ptable.lock);
 
-  // Parent might be sleeping in wait().
+  // Parent might be sleeping in wait(0).
   wakeup1(curproc->parent);
 
   // Pass abandoned children to init.
@@ -261,6 +329,7 @@ exit(void)
     }
   }
 
+  curproc->status = status;
   // Jump into the scheduler, never to return.
   curproc->state = ZOMBIE;
   sched();
@@ -270,7 +339,7 @@ exit(void)
 // Wait for a child process to exit and return its pid.
 // Return -1 if this process has no children.
 int
-wait(void)
+wait(int *status)
 {
   struct proc *p;
   int havekids, pid;
@@ -295,6 +364,9 @@ wait(void)
         p->name[0] = 0;
         p->killed = 0;
         p->state = UNUSED;
+        if(status){
+          *status = p->status;
+        }
         release(&ptable.lock);
         return pid;
       }

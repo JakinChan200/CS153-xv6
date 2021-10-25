@@ -8,6 +8,18 @@
 #include "proc.h"
 
 int
+sys_waitpid(void){
+  int pid;
+  int options;
+  argint(0, &pid);
+  argint(2, &options);
+  int* status;
+  if(argptr(1, (void*) &status, sizeof(*status)) < 0)
+	  return -1;
+  return waitpid(pid, status, options);
+}
+
+int
 sys_fork(void)
 {
   return fork();
@@ -16,14 +28,19 @@ sys_fork(void)
 int
 sys_exit(void)
 {
-  exit();
+  int status;
+  argint(0, &status);
+  exit(status);
   return 0;  // not reached
 }
 
 int
 sys_wait(void)
 {
-  return wait();
+  int* stat;
+  if(argptr(0, (void*)&stat, sizeof(*stat)) < 0)
+	  return -1;
+  return wait(stat);
 }
 
 int
